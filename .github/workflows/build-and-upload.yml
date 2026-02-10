@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       images:
-        description: '镜像列表，每行一个（支持 tag 或完整 digest）'
+        description: '镜像列表，每行一个（支持 repo:tag、repo@sha256:...、repo:tag@sha256:...）'
         required: true
         type: string
       platform:
@@ -31,6 +31,20 @@ jobs:
         run: |
           mkdir -p output
 
+          # 辅助函数：从镜像引用中提取纯仓库名（不含 tag 或 digest）
+          get_repo_name() {
+            local img="$1"
+            # 移除 @sha256:... 部分
+            local no_digest="${img%@sha256:*}"
+            # 如果包含 :tag 且有 /（说明是 repo:tag 而非 localhost:5000）
+            if [[ "$no_digest" == *":"* ]] && [[ "$no_digest" == */* ]]; then
+              echo "${no_digest%:*}"
+            else
+              # 可能是 nginx@sha256:... 或 localhost:5000/img，保留原样
+              echo "$no_digest"
+            fi
+          }
+
           # 处理多行输入
           while IFS= read -r image; do
             [[ -z "$image" ]] && continue
@@ -38,19 +52,16 @@ jobs:
             echo "📥 Pulling image: $image"
             docker pull "$image"
 
-            # 判断是否为 digest 格式（包含 @sha256:）
             if [[ "$image" == *@sha256:* ]]; then
-              # 提取仓库部分（移除 @sha256:...）
-              repo_part="${image%@sha256:*}"
-              # 创建临时 tag 名称（确保合法）
-              temp_tag="${repo_part}:offline-load"
+              # 提取纯仓库名（如 registry.k8s.io/ingress-nginx/kube-webhook-certgen）
+              repo_only=$(get_repo_name "$image")
+              temp_tag="${repo_only}:offline-load"
               echo "🏷️  Tagging as temporary reference: $temp_tag"
               docker tag "$image" "$temp_tag"
-              # 安全文件名（替换 / 和 : 为 _）
               safe_name=$(echo "$temp_tag" | sed 's/[\/:@]/_/g')
               docker save "$temp_tag" -o "output/${safe_name}.tar"
             else
-              # 普通 tag 镜像，直接保存
+              # 普通 tag 镜像（如 nginx:latest）
               safe_name=$(echo "$image" | sed 's/[\/:@]/_/g')
               docker save "$image" -o "output/${safe_name}.tar"
             fi
