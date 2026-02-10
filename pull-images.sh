@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-VERSION="1.2.0"
+VERSION="1.3.0"
 SCRIPT_NAME=$(basename "$0")
 
 show_help() {
@@ -59,7 +59,7 @@ done
 echo "📦 处理 ${#IMAGES[@]} 个镜像 (平台: $PLATFORM):"
 printf '  - %s\n' "${IMAGES[@]}"
 
-# === 新增：自动获取默认分支 ===
+# === 获取默认分支 ===
 echo "🔍 获取仓库默认分支..."
 DEFAULT_BRANCH=$(curl -fsS -H "Authorization: token $GITHUB_TOKEN" \
   "https://api.github.com/repos/$GITHUB_REPO" | jq -r '.default_branch')
@@ -87,7 +87,7 @@ fi
 
 echo "✅ 工作流已触发，等待运行完成..."
 
-# === 增强版：获取最新运行 ID（查询所有状态 + 默认分支）===
+# === 获取最新运行 ID ===
 echo "⏳ 等待 GitHub 创建工作流运行记录..."
 sleep 8
 
@@ -96,7 +96,6 @@ max_attempts=25
 for ((i=1; i<=max_attempts; i++)); do
   echo -n "  尝试 $i/$max_attempts... "
 
-  # 查询所有状态（包括 completed！因为可能跑得很快）
   response=$(curl -fsS -H "Authorization: token $GITHUB_TOKEN" \
     "https://api.github.com/repos/$GITHUB_REPO/actions/workflows/build-and-upload.yml/runs?branch=$DEFAULT_BRANCH" 2>/dev/null) || {
     echo "API 请求失败"
@@ -106,7 +105,6 @@ for ((i=1; i<=max_attempts; i++)); do
 
   count=$(echo "$response" | jq '.workflow_runs | length' 2>/dev/null || echo 0)
   if [ "$count" -gt 0 ]; then
-    # 取最新的一次（按 created_at 排序，GitHub 默认降序）
     run_id=$(echo "$response" | jq -r '.workflow_runs[0].id // empty')
     status=$(echo "$response" | jq -r '.workflow_runs[0].status // empty')
     if [ -n "$run_id" ] && [ "$run_id" != "null" ] && [ -n "$status" ]; then
@@ -128,7 +126,7 @@ fi
 
 echo "🔍 监控运行: https://github.com/$GITHUB_REPO/actions/runs/$run_id"
 
-# 轮询状态（即使已 completed 也继续）
+# 轮询状态
 start_time=$(date +%s)
 while true; do
   resp=$(curl -fsS -H "Authorization: token $GITHUB_TOKEN" \
@@ -177,11 +175,28 @@ curl -fsS -L -H "Authorization: token $GITHUB_TOKEN" \
   -H "Accept: application/vnd.github.v3+json" \
   "$artifact_url" -o offline-images.zip
 
-# 解压并导入
-echo "📤 解压并导入 Minikube..."
+# 解压
+echo "📤 解压 artifact..."
 rm -rf offline-images && mkdir offline-images
 unzip -q offline-images.zip -d offline-images
-minikube image load offline-images/*.tar
 
-echo "✅ 所有镜像已成功导入 Minikube！"
-echo "🔍 验证命令: minikube image list"
+# === 关键优化：使用 docker load 直接加载 ===
+echo "📤 导入镜像到 Minikube Docker..."
+for tar_file in offline-images/*.tar; do
+  if [ -f "$tar_file" ]; then
+    echo "  加载: $(basename "$tar_file")"
+    # 复制到 Minikube 并加载
+    minikube cp "$tar_file" /tmp/loaded_image.tar
+    minikube ssh -- docker load -i /tmp/loaded_image.tar
+    minikube ssh -- rm -f /tmp/loaded_image.tar
+  fi
+done
+
+# 清理
+rm -f offline-images.zip
+rm -rf offline-images
+
+# === 验证加载结果 ===
+echo "✅ 所有镜像已导入 Minikube！"
+echo "🔍 验证命令:"
+echo "   minikube ssh -- docker images --digests"
