@@ -27,7 +27,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Pull and Save Images
-        uses: B2A9C2DE/DockerTarBuilder@main
+        uses: B2A9C2DE/DockerTarBuilder@master
         with:
           images: ${{ github.event.inputs.images }}
           platforms: ${{ github.event.inputs.platform }}
