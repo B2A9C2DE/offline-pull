@@ -1,0 +1,40 @@
+name: Build and Upload Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      images:
+        description: '镜像列表，每行一个'
+        required: true
+        type: string
+      platform:
+        description: '目标平台'
+        required: false
+        default: 'linux/amd64'
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Pull and Save Images
+        uses: B2A9C2DE/DockerTarBuilder@main
+        with:
+          images: ${{ github.event.inputs.images }}
+          platforms: ${{ github.event.inputs.platform }}
+          output_dir: ./output
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-images
+          path: ./output/*.tar
